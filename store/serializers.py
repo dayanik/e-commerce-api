@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from . import models
 
 User = get_user_model()
 
@@ -33,3 +34,32 @@ class SignUpSerializer(serializers.ModelSerializer):
         user.access = str(refresh_token.access_token)
 
         return user
+
+
+class ProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Product
+        fields = "__all__"
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    product_title = serializers.CharField(
+        source='product.title', read_only=True
+    )
+
+    class Meta:
+        model = models.CartItem
+        fields = ["id", 'product_title', 'quantity']
+
+
+class AddCartItemSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = models.Cart
+        fields = ["id", "status", "items"]
