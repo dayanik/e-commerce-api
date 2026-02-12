@@ -1,19 +1,31 @@
 from rest_framework import generics, status
+from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
+from django.db import transaction
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import serializers, models
 
 
-User = get_user_model()
-
-
 class SignUpView(generics.CreateAPIView):
-    queryset = User
+    queryset = models.User.objects.all()
     serializer_class = serializers.SignUpSerializer
     permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        refresh = RefreshToken.for_user(user)
+        tokens = {
+            'access': str(refresh.access_token),
+            'refresh': str(refresh)
+        }
+        return Response(data=tokens, status=status.HTTP_201_CREATED)
 
 
 class ProductListView(generics.ListAPIView):
@@ -27,13 +39,15 @@ class ProductView(generics.RetrieveAPIView):
 
 
 class CartView(generics.RetrieveAPIView):
+    serializer_class = serializers.CartSerializer
 
     def get(self, request):
-        cart, created = models.Cart.objects.get_or_create(
+        # user = models.User.objects.get()
+        cart, _ = models.Cart.objects.get_or_create(
             user=request.user,
             status=models.Cart.CartStatus.ACTIVE
         )
-        serializer = serializers.CartSerializer(cart)
+        serializer = self.get_serializer(cart)
         return Response(serializer.data)
 
 
@@ -46,10 +60,11 @@ class CartItemCreateView(generics.GenericAPIView):
 
         product = get_object_or_404(
             models.Product,
-            id=serializer.validated_data["product_id"])
+            id=serializer.validated_data["product_id"]
+        )
         quantity = serializer.validated_data["quantity"]
 
-        cart, created = models.Cart.objects.get_or_create(
+        cart, _ = models.Cart.objects.get_or_create(
             user=request.user,
             status=models.Cart.CartStatus.ACTIVE
         )
@@ -75,4 +90,36 @@ class CartItemDeleteView(generics.DestroyAPIView):
         return models.CartItem.objects.filter(
             cart__user=self.request.user,
             cart__status=models.Cart.CartStatus.ACTIVE
+        )
+
+
+class CheckOutView(APIView):
+
+    @transaction.atomic
+    def get(self, request):
+        cart = models.Cart.objects.filter(
+            user=request.user,
+            status=models.Cart.CartStatus.ACTIVE
+        ).prefetch_related("items__product").first()
+
+        amount = 0
+        for cart_item in cart.items.all():
+            amount += cart_item.product.price * cart_item.quantity
+
+        order = models.Order.objects.create(
+            cart=cart,
+            amount=amount
+        )
+
+        cart.status = models.Cart.CartStatus.ORDERED
+        cart.save()
+        order.save()
+
+        return Response(
+            {
+                "order_id": order.id,
+                "amount": amount,
+                "status": order.status
+            },
+            status=status.HTTP_201_CREATED
         )
