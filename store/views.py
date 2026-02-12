@@ -97,13 +97,20 @@ class CheckOutView(APIView):
 
     @transaction.atomic
     def get(self, request):
-        cart = models.Cart.objects.filter(
+        cart: models.Cart = models.Cart.objects.filter(
             user=request.user,
             status=models.Cart.CartStatus.ACTIVE
-        ).prefetch_related("items__product").first()
+        ).first()
+
+        cart_items: list[models.CartItem] = cart.items.all()
+        if not cart_items:
+            return Response(
+                {"message": "your cart is empty"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         amount = 0
-        for cart_item in cart.items.all():
+        for cart_item in cart_items:
             amount += cart_item.product.price * cart_item.quantity
 
         order = models.Order.objects.create(
@@ -122,4 +129,25 @@ class CheckOutView(APIView):
                 "status": order.status
             },
             status=status.HTTP_201_CREATED
+        )
+
+
+class OrderListView(generics.ListAPIView):
+    serializer_class = serializers.OrderSerializer
+
+    def get_queryset(self):
+        return models.Order.objects.filter(cart__user=self.request.user)
+
+
+class OrderGetCanceleView(generics.RetrieveUpdateAPIView):
+    queryset = models.Order.objects.all()
+    serializer_class = serializers.OrderSerializer
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.status = models.Order.OrderStatus.CANCELED
+        instance.save()
+        return Response(
+            {"message": "Order was canceled."},
+            status=status.HTTP_200_OK
         )
